@@ -1,0 +1,49 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  # Both are for the build attestation below, which is what ties a published
+  # archive to the workflow run that produced it.
+  id-token: write
+  attestations: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The changelog is built from the commits since the previous tag, and
+          # a shallow clone has none of them.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # These stand between a tag and something "svpnd update" installs on every
+      # machine, so they run here too rather than being trusted from whatever ci
+      # did on the branch.
+      - run: make check
+
+      # make release, not goreleaser-action: the version is pinned in the
+      # Makefile and nowhere else, so a local `make snapshot` is built by the
+      # same goreleaser that publishes here.
+      - run: make release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Verifiable with "gh attestation verify <file> --repo paccolamano/svpn".
+      # SHA256SUMS is attested alongside the archives: on its own it only proves
+      # a download arrived intact, and attesting it is what makes the checksums
+      # themselves traceable to this run.
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/SHA256SUMS

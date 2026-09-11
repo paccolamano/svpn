@@ -1,0 +1,23 @@
+<?xml version='1.0' encoding='utf-8'?>
+<sslvpn-tunnel ver='2' dtls='1' patch='1'>
+  <dtls-config ver='2' heartbeat-interval='3' />
+  <tunnel-method value='ppp' />
+  <tunnel-method value='tun' />
+  <client-config save-password='off' keep-alive='off' auto-connect='off' />
+  <ipv4>
+    <dns ip='10.140.9.4' />
+    <dns ip='10.0.16.26' />
+    <assigned-addr ipv4='10.110.248.72' />
+    <split-tunnel-info>
+      <addr ip='10.0.0.0' mask='255.0.0.0' />
+      <addr ip='192.168.100.0' mask='255.255.255.0' />
+      <addr ip='172.17.29.16' mask='255.255.255.240' />
+      <addr ip='172.17.0.0' mask='255.255.0.0' />
+      <addr ip='15.161.144.185' mask='255.255.255.255' />
+      <addr ip='15.161.144.185' mask='255.255.255.255' />
+      <addr ip='192.168.146.0' mask='255.255.254.0' />
+      <addr ip='15.161.144.185' mask='255.255.255.255' />
+    </split-tunnel-info>
+  </ipv4>
+  <idle-timeout val='3600' />
+</sslvpn-tunnel>

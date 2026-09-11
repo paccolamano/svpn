@@ -1,0 +1,50 @@
+[Unit]
+Description=Sorint VPN daemon
+Documentation=https://github.com/paccolamano/svpn
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+
+# Written by `svpnd install` and replaced wholesale by the next one, so put
+# local changes in the environment file below rather than here.
+#
+# ExecStart is not a fixed path: the prefix is chosen at install time, and a
+# unit naming /usr/bin would start a different binary than the one installed.
+EnvironmentFile=-{{.ConfFile}}
+ExecStart={{.Binary}} $SVPND_ARGS
+Restart=on-failure
+RestartSec=2
+
+# The socket lives here, and systemd creates it owned by the service.
+RuntimeDirectory=svpn
+RuntimeDirectoryMode=0755
+
+# Members of this group can reach the socket. Add the users who may control
+# the VPN to it; the daemon can narrow that further with --allow-uid.
+Group={{.Group}}
+UMask=0007
+
+# The daemon needs to create a tun device and change routes, and nothing else.
+# Dropping every other capability limits what a flaw in it could reach.
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictNamespaces=yes
+LockPersonality=yes
+
+# TERM must reach the daemon so it can tear the tunnel down and put the routes
+# back before exiting.
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

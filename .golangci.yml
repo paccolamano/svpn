@@ -1,0 +1,110 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+issues:
+  # The defaults, 50 and 3, hide findings behind the ones already reported and
+  # make a run look closer to clean than it is.
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - contextcheck
+    - copyloopvar
+    - depguard
+    - errorlint
+    - forbidigo
+    - gosec
+    - misspell
+    - nolintlint
+    - revive
+    - unconvert
+    - usestdlibvars
+    - whitespace
+    - wrapcheck
+
+  settings:
+    # The two rules below turn conventions that CLAUDE.md states in prose into
+    # something CI enforces. Both exist for the same reason: --detailed-errors
+    # can only reach the real failure if every error carries a stack, and
+    # stdlib errors do not.
+    depguard:
+      rules:
+        errors:
+          deny:
+            - pkg: errors
+              desc: use github.com/sorintlab/errors, which re-exports Is, As and Unwrap and carries a stack
+            - pkg: github.com/pkg/errors
+              desc: use github.com/sorintlab/errors
+
+    forbidigo:
+      # Replaces the default list, which forbids fmt.Print* — the client prints
+      # its output that way on purpose.
+      forbid:
+        - pattern: ^fmt\.Errorf$
+          msg: use errors.Errorf or errors.Wrapf from github.com/sorintlab/errors
+
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: empty-block
+        - name: error-naming
+        - name: error-return
+        - name: error-strings
+        - name: errorf
+        - name: exported
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: range
+        - name: receiver-naming
+        - name: redefines-builtin-id
+        - name: superfluous-else
+        - name: time-naming
+        - name: unexported-return
+        - name: unreachable-code
+        - name: var-declaration
+        - name: var-naming
+
+    wrapcheck:
+      ignore-sigs:
+        - .Errorf(
+        - errors.New(
+        - errors.Unwrap(
+        - errors.Join(
+        - .Wrap(
+        - .Wrapf(
+        - .WithMessage(
+        - .WithMessagef(
+        - .WithStack(
+
+  exclusions:
+    generated: lax
+    rules:
+      # Tests build fixtures and drive fakes; wrapping every error there says
+      # nothing a failed assertion does not already say.
+      - path: _test\.go
+        linters:
+          - gosec
+          - wrapcheck
+      # The parts of the daemon that shell out run fixed argument vectors built
+      # from validated settings, not from anything a client sends.
+      - path: internal/netcfg/linux\.go
+        linters:
+          - gosec
+        text: G204
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/paccolamano/svpn

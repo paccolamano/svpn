@@ -1,0 +1,76 @@
+version: 2
+
+project_name: svpn
+
+# There are deliberately no `before` hooks, and in particular no `go mod tidy`.
+# goreleaser validates the git state at pipe 3 and runs before-hooks at pipe 9,
+# so a hook that touches a tracked file does not fail the release — it publishes
+# from a tree that no longer matches the tag, and the build attestation then
+# attests that. Whatever a hook would check belongs in ci, which runs first.
+
+# Linux only, deliberately. The protocol half builds for macOS and Windows and
+# `svpn debug connect` is expected to work there, but netcfg and ipc return
+# "not implemented" and `svpnd install` writes a systemd unit — publishing
+# binaries that cannot install themselves would promise something untrue.
+builds:
+  - id: svpn
+    main: ./cmd/svpn
+    binary: svpn
+    env:
+      - CGO_ENABLED=0
+    goos: [linux]
+    goarch: [amd64, arm64]
+    # The same flags the Makefile uses, so `svpn --version` says the same kind
+    # of thing whatever the binary was built by.
+    ldflags:
+      - -w -X github.com/paccolamano/svpn/cmd.Version={{ .Version }}
+
+  - id: svpnd
+    main: ./cmd/svpnd
+    binary: svpnd
+    env:
+      - CGO_ENABLED=0
+    goos: [linux]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -w -X github.com/paccolamano/svpn/cmd.Version={{ .Version }}
+
+archives:
+  - id: svpn
+    ids: [svpn, svpnd]
+    formats: [tar.gz]
+    # internal/release matches on this suffix to pick the right build, and
+    # install.sh constructs the same name. Changing it breaks both.
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  # internal/release and install.sh both look for this exact name.
+  name_template: "SHA256SUMS"
+  algorithm: sha256
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  # A tag carrying a pre-release suffix publishes as one, so `svpnd update`
+  # and install.sh — which both ask for the latest full release — do not pick
+  # it up by accident.
+  prerelease: auto
+  footer: |
+    ## Install
+
+    ```sh
+    curl -fsSL https://raw.githubusercontent.com/paccolamano/svpn/main/install.sh | sh
+    ```
+
+    Or download the archive for your architecture, verify it against
+    `SHA256SUMS`, unpack it and run `sudo ./svpnd install`.

@@ -1,0 +1,84 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# A new push to the same branch makes the previous run irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          # go.mod is the single source of the Go version; nothing here repeats it.
+          go-version-file: go.mod
+          cache: true
+      - run: go test -race ./...
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      # golangci-lint is a tool dependency in go.mod, so this runs the pinned
+      # version without the workflow naming one. There is no second place for
+      # the version to drift from, and `make lint` is these same two commands.
+      - name: gofmt and goimports
+        run: go tool golangci-lint fmt --diff
+      - name: vet and linters
+        run: go tool golangci-lint run
+
+  config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      # The workflows, the release config and install.sh. No Go test reaches any
+      # of them, and without this they are first exercised by pushing a tag.
+      # shellcheck is preinstalled on the runners, so install.sh is really
+      # checked here even though a developer's machine may skip it.
+      - run: make check-config
+
+  crosscheck:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      # netcfg, ipc and install have per-platform files, so it is easy to break
+      # a target nobody builds locally. The daemon only works on Linux, but the
+      # protocol half claims to build everywhere.
+      - run: go build -o /dev/null ./...
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}

@@ -39,6 +39,14 @@ The cost is that its whole module graph sits in go.mod and go.sum as `// indirec
 only used by `make snapshot`, and the release workflow uses its own action. That
 one is fetched on demand by `go run`, as is `actionlint`.
 
+**go.mod names `go 1.27`, with no patch version, and that is deliberate.**
+`setup-go` reads it and installs the runner's preinstalled latest 1.27.x, which
+needs no download; pinning `1.27.0` would make it fetch that exact patch and
+would leave the project one patch behind every tool that wants a current one —
+which is how CI first broke here, on goreleaser needing 1.27.1. Do not add the
+patch back. The `GOTOOLCHAIN=auto` on the tool invocations in the Makefile is
+the remaining fallback, for a tool that wants a newer *minor*.
+
 **The workflows pin nothing of their own.** `ci` runs `go tool golangci-lint`
 and `make check-config`; `release` runs `make check` and `make release`. Every
 version lives in `go.mod` or the Makefile, so there is no second place to

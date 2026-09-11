@@ -1,6 +1,6 @@
 module github.com/paccolamano/svpn
 
-go 1.27.0
+go 1.27
 
 require (
 	github.com/sorintlab/errors v0.0.0-20250603080046-3d7602608bf0

@@ -24,8 +24,16 @@ $(shell mkdir -p bin )
 GORELEASER_VERSION ?= v2.18.1
 ACTIONLINT_VERSION ?= v1.7.12
 
-GORELEASER = go run github.com/goreleaser/goreleaser/v2@$(GORELEASER_VERSION)
-ACTIONLINT = go run github.com/rhysd/actionlint/cmd/actionlint@$(ACTIONLINT_VERSION)
+# GOTOOLCHAIN=auto because these are tools, not dependencies, and a tool may ask
+# for a newer Go than the project targets. It is a fallback, not the main
+# mechanism: go.mod names a minor version with no patch, so setup-go installs
+# the runner's latest 1.27.x and a tool wanting a newer *patch* is already
+# satisfied. This covers the case where one wants a newer *minor*, which would
+# otherwise be a hard failure under the GOTOOLCHAIN=local that setup-go pins.
+#
+# Fetching a toolchain to run a tool does not change what svpn is built with.
+GORELEASER = GOTOOLCHAIN=auto go run github.com/goreleaser/goreleaser/v2@$(GORELEASER_VERSION)
+ACTIONLINT = GOTOOLCHAIN=auto go run github.com/rhysd/actionlint/cmd/actionlint@$(ACTIONLINT_VERSION)
 
 .PHONY: all
 all: build

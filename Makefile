@@ -77,6 +77,11 @@ lint:
 # It is the only thing that looks at the //go:build !linux halves of netcfg,
 # ipc and install: golangci-lint only ever analyses the host's GOOS, and go vet
 # cannot run here because it compiles the tests too, and those are Linux-only.
+#
+# The GUI is not here and cannot be: Fyne needs cgo and an OpenGL toolchain for
+# the target, which `go build` alone cannot cross-compile. It is also not
+# needed — a directory with its own go.mod is pruned from this module's ./...
+# patterns, so gui/ is invisible to every target above whether or not it builds.
 .PHONY: crosscheck
 crosscheck:
 	GOOS=linux   GOARCH=amd64 go build -o /dev/null ./...
@@ -84,8 +89,14 @@ crosscheck:
 	GOOS=darwin  GOARCH=arm64 go build -o /dev/null ./...
 
 # Everything CI runs, in one command.
+#
+# gui-check is in here rather than left to the developer to remember precisely
+# because gui/ is a separate module: nothing else in this file can see it, so
+# without naming it explicitly the desktop client would be the one part of the
+# repository that is never checked. The cost is that `make check` now needs cgo
+# and the OpenGL and X11 headers Fyne links against.
 .PHONY: check
-check: lint test crosscheck check-config
+check: lint test crosscheck check-config gui-check
 
 # The files no Go test can reach: the workflows, the release config and the
 # installer script. Without this they are exercised for the first time by
@@ -103,6 +114,38 @@ check-config:
 	else \
 		echo "check-config: shellcheck is not installed here, skipping install.sh (CI runs it)"; \
 	fi
+
+# The desktop client. It lives in gui/ as a module of its own because Fyne
+# needs cgo, and the two binaries above are built with CGO_ENABLED=0 and
+# cross-compiled to three targets: one go.mod holding both would give up the
+# second to get the first. The split also means the GUI cannot import anything
+# under internal/, which is the rule that keeps it a client of the daemon
+# rather than a second copy of the protocol.
+GUI_PATH = $(PROJDIR)/gui
+
+.PHONY: gui
+gui:
+	cd $(GUI_PATH) && GO111MODULE=on go build -ldflags "-w" -o $(PROJDIR)/bin/svpn-gui .
+
+.PHONY: gui-test
+gui-test:
+	cd $(GUI_PATH) && GO111MODULE=on go test -race ./...
+
+# golangci-lint is a tool dependency of *this* module, and `go tool` resolves
+# tools from the module in the working directory — gui/go.mod declares none, and
+# giving it one would put the linter's whole module graph in a second go.sum.
+# Building the pinned binary once and running it with gui/ as its cwd keeps the
+# version in the one place it already lives.
+$(PROJDIR)/bin/golangci-lint: go.mod go.sum
+	GO111MODULE=on go build -o $@ github.com/golangci/golangci-lint/v2/cmd/golangci-lint
+
+.PHONY: gui-lint
+gui-lint: $(PROJDIR)/bin/golangci-lint
+	cd $(GUI_PATH) && $(PROJDIR)/bin/golangci-lint fmt --diff --config $(PROJDIR)/.golangci.yml
+	cd $(GUI_PATH) && $(PROJDIR)/bin/golangci-lint run --config $(PROJDIR)/.golangci.yml
+
+.PHONY: gui-check
+gui-check: gui-lint gui-test
 
 # Installs from this working tree rather than from a release, which is what a
 # developer wants after changing the daemon. svpnd install does the rest.

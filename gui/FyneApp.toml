@@ -1,0 +1,14 @@
+# Metadata for `fyne package`, which builds the .desktop entry and the icon
+# a desktop environment needs to show this in a launcher. The plain binary
+# `make gui` produces does not read any of it.
+#
+# Icon is the same file main.go embeds, so a packaged install and a bare
+# `make gui` binary carry the same mark.
+Website = "https://github.com/paccolamano/svpn"
+
+[Details]
+  Icon = "icon.png"
+  Name = "svpn"
+  ID = "it.sorint.svpn"
+  Version = "0.1.0"
+  Build = 1

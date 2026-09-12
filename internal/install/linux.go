@@ -15,7 +15,7 @@ import (
 
 	"github.com/sorintlab/errors"
 
-	"github.com/paccolamano/svpn/pkg/ipc"
+	"github.com/paccolamano/svpn/internal/ipc"
 )
 
 // unitName is what systemctl is asked about.
@@ -78,7 +78,12 @@ func Apply(steps Steps, logf func(format string, args ...any)) error {
 		logf("installed %s", binary.To)
 	}
 
-	for _, file := range []File{steps.Unit, steps.Conf} {
+	files := []File{steps.Unit, steps.Conf}
+	if steps.GUI {
+		files = append(files, steps.Desktop, steps.Icon)
+	}
+
+	for _, file := range files {
 		if err := writeFile(file); err != nil {
 			return err
 		}

@@ -93,9 +93,18 @@ linters:
         linters:
           - gosec
           - wrapcheck
+      # The command layer is where an error stops: run() prints it and sets the
+      # exit code, and nothing above it will add anything. What it calls is
+      # this project's own packages, which already wrap with a stack and a
+      # message written to be read by a person — "svpnd is not reachable;
+      # check the service is running" needs no second sentence in front of it,
+      # and a wrap here prints the command twice.
+      - path: internal/(client|service)/cli/
+        linters:
+          - wrapcheck
       # The parts of the daemon that shell out run fixed argument vectors built
       # from validated settings, not from anything a client sends.
-      - path: internal/netcfg/linux\.go
+      - path: internal/service/netcfg/linux\.go
         linters:
           - gosec
         text: G204

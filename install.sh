@@ -7,8 +7,19 @@
 # This script is deliberately thin. It resolves a release, verifies the archive
 # against its published checksum, unpacks it and then hands over to
 # "svpnd install" — which is where every decision about groups, the systemd
-# unit and the uid allowlist actually lives. Nothing about the installation is
-# duplicated here, because two copies of that knowledge would drift.
+# unit, the uid allowlist and the desktop launcher actually lives. Nothing
+# about the installation is duplicated here, because two copies of that
+# knowledge would drift.
+#
+# That is also why adding the desktop client changed nothing here. One archive
+# per architecture carries whatever was built for it — the amd64 one has a
+# desktop client, the arm64 one does not, because Fyne needs an OpenGL
+# toolchain for the target — and "svpnd install" installs what it finds. Flags
+# after the script name are passed straight through, so:
+#
+#   curl -fsSL .../install.sh | sh -s -- --no-gui
+#
+# installs the daemon and the CLI on a machine with no display.
 #
 # SVPN_VERSION pins a tag instead of taking the latest.
 

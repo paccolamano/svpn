@@ -23,7 +23,7 @@ builds:
     # The same flags the Makefile uses, so `svpn --version` says the same kind
     # of thing whatever the binary was built by.
     ldflags:
-      - -w -X github.com/paccolamano/svpn/cmd.Version={{ .Version }}
+      - -w -X github.com/paccolamano/svpn/internal/build.Version={{ .Version }}
 
   - id: svpnd
     main: ./cmd/svpnd
@@ -33,11 +33,41 @@ builds:
     goos: [linux]
     goarch: [amd64, arm64]
     ldflags:
-      - -w -X github.com/paccolamano/svpn/cmd.Version={{ .Version }}
+      - -w -X github.com/paccolamano/svpn/internal/build.Version={{ .Version }}
+
+  # The desktop client, amd64 only and deliberately so. Fyne needs cgo and an
+  # OpenGL toolchain for the *target*: amd64 is native on the runner and needs
+  # nothing but the -dev headers, while arm64 would want a cross compiler plus
+  # arm64 X11 and GL headers through apt multiarch, or a second native runner.
+  #
+  # An arm64 archive therefore carries the daemon and the CLI and no window,
+  # which is what `svpnd install` already copes with: it takes a desktop client
+  # when the payload has one. Same reason the whole release is Linux-only —
+  # shipping something that cannot install itself promises what is not true.
+  - id: svpn-gui
+    main: ./cmd/svpn-gui
+    binary: svpn-gui
+    env:
+      - CGO_ENABLED=1
+    goos: [linux]
+    goarch: [amd64]
+    ldflags:
+      - -w -X github.com/paccolamano/svpn/internal/build.Version={{ .Version }}
 
 archives:
   - id: svpn
-    ids: [svpn, svpnd]
+    # One archive per architecture, carrying whatever was built for it. Not a
+    # separate download for the desktop client: install.sh hands the extracted
+    # directory to `svpnd install`, which installs what it finds, so a user
+    # gets both without being asked to choose between a CLI and a window.
+    ids: [svpn, svpnd, svpn-gui]
+    # goreleaser refuses an archive whose binary count varies by platform
+    # unless told the difference is intended, and here it is: the amd64 archive
+    # has three binaries and the arm64 one has two. Its worry is a user
+    # confused by the difference, which is answered on the other side —
+    # `svpnd install` reports "no desktop client in this installation" rather
+    # than silently doing less.
+    allow_different_binary_count: true
     formats: [tar.gz]
     # internal/release matches on this suffix to pick the right build, and
     # install.sh constructs the same name. Changing it breaks both.

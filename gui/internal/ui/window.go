@@ -100,8 +100,16 @@ type Window struct {
 	action *widget.Button
 	cancel *widget.Button
 
+	// tray is the desktop's notification area, when the session has one, and
+	// nil when it does not — which is the one test for whether any of the
+	// tray state below was ever built.
+	tray       desktop.App
 	trayToggle *fyne.MenuItem
 	trayMenu   *fyne.Menu
+	trayIcons  *trayIcons
+	// trayShown is the icon the panel is currently carrying, so that a
+	// snapshot which changes nothing does not republish it once a second.
+	trayShown fyne.Resource
 
 	branding Branding
 
@@ -490,56 +498,6 @@ func (w *Window) renderActions(snapshot core.Snapshot) {
 	}
 
 	w.activity.setRunning(snapshot.Busy())
-}
-
-// installTray puts the client in the notification area, which is where a VPN
-// client spends almost all of its life. Closing the window hides it instead of
-// quitting, so the tunnel is not torn down by someone tidying their desktop.
-func (w *Window) installTray() {
-	desk, ok := w.app.(desktop.App)
-	if !ok {
-		// No tray: a plain desktop, or a session whose panel has no status
-		// area. Closing the window then has to mean quitting, or there would
-		// be no way back to it.
-		return
-	}
-
-	w.trayToggle = fyne.NewMenuItem("Connect", w.onAction)
-
-	w.trayMenu = fyne.NewMenu("svpn",
-		fyne.NewMenuItem("Show", func() {
-			w.win.Show()
-			w.win.RequestFocus()
-		}),
-		fyne.NewMenuItemSeparator(),
-		w.trayToggle,
-	)
-
-	desk.SetSystemTrayMenu(w.trayMenu)
-	desk.SetSystemTrayIcon(w.branding.Icon)
-
-	w.win.SetCloseIntercept(func() { w.win.Hide() })
-}
-
-// renderTray keeps the tray menu saying what the window says.
-func (w *Window) renderTray(snapshot core.Snapshot) {
-	if w.trayToggle == nil {
-		return
-	}
-
-	switch {
-	case snapshot.CanDisconnect():
-		w.trayToggle.Label = "Disconnect"
-		w.trayToggle.Disabled = false
-	case snapshot.CanConnect():
-		w.trayToggle.Label = "Connect"
-		w.trayToggle.Disabled = false
-	default:
-		w.trayToggle.Label = headline(snapshot.Phase)
-		w.trayToggle.Disabled = true
-	}
-
-	w.trayMenu.Refresh()
 }
 
 // statusColorName is the whole status readout for anyone glancing at the

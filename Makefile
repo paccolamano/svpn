@@ -40,6 +40,23 @@ svpnd:
 svpn-gui:
 	GO111MODULE=on go build -ldflags $(LD_FLAGS) -o $(PROJDIR)/bin/svpn-gui $(REPO_PATH)/cmd/svpn-gui
 
+# The system libraries Fyne links against, as Debian and Ubuntu name them.
+#
+# Normally only CI runs this: a desktop machine already has them, dragged in by
+# whatever it runs its own session with — which is exactly how this list came
+# to be wrong once. The GUI built here and the runner failed on a header no
+# developer was missing, so the list lives in one place and the jobs call it
+# rather than each carrying a copy to go stale.
+#
+# GLFW compiles *both* its X11 and its Wayland backend unless a build tag picks
+# one (see go-gl's c_glfw_lin_*.go), so both sets of headers are required. The
+# wayland-protocols ones are not: go-gl vendors them already generated.
+GUI_DEPS = libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev
+
+.PHONY: gui-deps
+gui-deps:
+	sudo apt-get update && sudo apt-get install -y $(GUI_DEPS)
+
 .PHONY: test
 test:
 	GO111MODULE=on go test -race ./...

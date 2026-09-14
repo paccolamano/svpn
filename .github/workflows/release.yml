@@ -26,10 +26,10 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # Fyne links against OpenGL and X11, and the desktop client is built
-      # from this workflow with cgo on. make check needs them too: the widgets
-      # are a package of this module and lint and test walk ./... .
-      - run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev xorg-dev
+      # Fyne links against OpenGL, X11 and Wayland, and the desktop client is
+      # built from this workflow with cgo on. make check needs them too: the
+      # widgets are a package of this module and lint and test walk ./... .
+      - run: make gui-deps
 
       # These stand between a tag and something "svpnd update" installs on every
       # machine, so they run here too rather than being trusted from whatever ci

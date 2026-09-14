@@ -35,7 +35,9 @@ toolchain for the *target*, which `go build` cannot cross-compile. Keep that
 list at two: anything added to the Fyne half stops being cross-checked.
 
 `make check` and `make test` need cgo and the OpenGL and X11 headers Fyne links
-against (`libgl1-mesa-dev` and `xorg-dev` on Debian and Ubuntu). That is the
+against — `make gui-deps` installs them, and that target is the only place the
+list lives, because a desktop machine has them already and a wrong list shows
+up first on a runner. That is the
 price of the desktop client being a package of this module rather than a second
 one, and it is why `internal/client/state` exists: the controller is Fyne-free
 and stays in the half every target reaches.
@@ -277,7 +279,7 @@ Known gaps, all deliberate and all honest in the README:
   which was checked by unpacking a snapshot and running its `svpnd install
   --dry-run`. Nothing in `.github/workflows/` executes until a push and a tag,
   and the one thing a snapshot cannot prove is the runner's apt packages:
-  `libgl1-mesa-dev` and `xorg-dev` are now required by `test`, `lint` and
+  the packages `make gui-deps` installs are now required by `test`, `lint` and
   `release`, and if they are wrong the first sign will be a failing job.
   `svpnd update` is in a similar position: the download, checksum and
   extraction are tested against an `httptest.Server`, and `install.HasGUI`

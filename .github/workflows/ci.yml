@@ -23,10 +23,11 @@ jobs:
           # go.mod is the single source of the Go version; nothing here repeats it.
           go-version-file: go.mod
           cache: true
-      # Fyne links against OpenGL and X11. internal/client/gui is the only
-      # package that needs them, but it is a package of this module like any
-      # other, so the jobs that walk ./... need them too.
-      - run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev xorg-dev
+      # Fyne links against OpenGL, X11 and Wayland. internal/client/gui is
+      # the only package that needs them, but it is a package of this module
+      # like any other, so the jobs that walk ./... need them too. The list is
+      # in the Makefile: three jobs carried a copy and all three were wrong.
+      - run: make gui-deps
       - run: go test -race ./...
 
   lint:
@@ -37,10 +38,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      # Fyne links against OpenGL and X11. internal/client/gui is the only
-      # package that needs them, but it is a package of this module like any
-      # other, so the jobs that walk ./... need them too.
-      - run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev xorg-dev
+      # Fyne links against OpenGL, X11 and Wayland. internal/client/gui is
+      # the only package that needs them, but it is a package of this module
+      # like any other, so the jobs that walk ./... need them too. The list is
+      # in the Makefile: three jobs carried a copy and all three were wrong.
+      - run: make gui-deps
       # golangci-lint is a tool dependency in go.mod, so this runs the pinned
       # version without the workflow naming one. There is no second place for
       # the version to drift from, and `make lint` is these same two commands.

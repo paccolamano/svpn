@@ -34,13 +34,17 @@ break a build target you are not on. It skips exactly two packages —
 toolchain for the *target*, which `go build` cannot cross-compile. Keep that
 list at two: anything added to the Fyne half stops being cross-checked.
 
-`make check` and `make test` need cgo and the OpenGL and X11 headers Fyne links
-against — `make gui-deps` installs them, and that target is the only place the
-list lives, because a desktop machine has them already and a wrong list shows
-up first on a runner. That is the
-price of the desktop client being a package of this module rather than a second
-one, and it is why `internal/client/state` exists: the controller is Fyne-free
-and stays in the half every target reaches.
+`make check` and `make test` need cgo and the headers Fyne links against.
+`make gui-deps` installs them and is the only place that list lives, because a
+desktop machine has them already and a wrong list shows up first on a runner —
+which is exactly how it went: the list said OpenGL and X11, and CI failed on
+`wayland-client-core.h`, because go-gl's glfw compiles **both** its X11 and its
+Wayland backend unless a build tag picks one. It is four packages now and the
+release that published v0.3.0 ran `make check` with them, so they are confirmed
+rather than deduced. That is the price of the desktop client being a package of
+this module rather than a second one, and it is why `internal/client/state`
+exists: the controller is Fyne-free and stays in the half every target
+reaches.
 
 `golangci-lint` is a **tool dependency** in `go.mod`, so `make lint` runs
 `go tool golangci-lint` and the version lives in exactly one place. CI runs the
@@ -195,6 +199,12 @@ taken from it). These cost real debugging time — do not "simplify" them away:
   until it receives an LCP Configure-Request. Without one the tunnel is open
   but idle and reads time out. `openfortivpn` gets this free because `pppd`
   talks as soon as it is spawned.
+- **The PPP options mirror how `openfortivpn` invokes `pppd`.** `noauth` (the
+  cookie already authenticated the session), `noaccomp` and `nopcomp` (both
+  header fields stay intact), `noipdefault` with `ipcp-accept-local` (the
+  gateway assigns the address) and `usepeerdns`. `internal/ppp` is otherwise
+  kept independent of the FortiGate transport, so the same code works over
+  anything that carries PPP frames.
 - **The split-tunnel list appears under two different XML element names**,
   `<split-tunnel-include>` or `<split-tunnel-info><addr>`, depending on FortiOS
   version. Reading only one yields an empty list, which is indistinguishable
@@ -273,20 +283,26 @@ Known gaps, all deliberate and all honest in the README:
   GitHub Releases plus `svpnd install`; `.goreleaser.yml` builds linux
   amd64/arm64 only, because the daemon does not work anywhere else and shipping
   a binary that cannot install itself would promise something untrue.
-- **The release and CI workflows have never run.** `make check-config` validates
-  them with `actionlint` and `goreleaser check`, and `make snapshot` proves the
-  goreleaser half locally — including that both archives install themselves,
-  which was checked by unpacking a snapshot and running its `svpnd install
-  --dry-run`. Nothing in `.github/workflows/` executes until a push and a tag,
-  and the one thing a snapshot cannot prove is the runner's apt packages:
-  the packages `make gui-deps` installs are now required by `test`, `lint` and
-  `release`, and if they are wrong the first sign will be a failing job.
-  `svpnd update` is in a similar position: the download, checksum and
-  extraction are tested against an `httptest.Server`, and `install.HasGUI`
-  decides whether the hand-over passes `--no-gui`, but the hand-over itself is
-  not exercised.
-- **`install.sh` has never been executed.** It needs a published release to
-  point at. `sh -n` and — in CI only — `shellcheck` are all it gets.
+- **The release path has run, and what it produced was checked.** v0.1.0 to
+  v0.3.0 are published by the workflow, not by hand. Because `release` runs
+  `make check` before `make release`, a published tag is also proof that test,
+  lint, crosscheck and check-config all passed on a runner with the GUI in the
+  tree. The v0.3.0 archives were downloaded and opened: the amd64 one carries
+  `svpn`, `svpnd` and `svpn-gui`, the arm64 one carries two, `SHA256SUMS`
+  verifies the way `install.sh` verifies it, and the **published** `svpnd`
+  plans a complete install — three binaries, unit, env file, launcher, icon —
+  against a temp prefix. So `allow_different_binary_count` does what it
+  claims and a release really does install itself.
+- **`svpnd update` is still not exercised end to end.** The download, checksum
+  and extraction are tested against an `httptest.Server`, and `install.HasGUI`
+  decides whether the hand-over passes `--no-gui`, but the hand-over itself —
+  running the new binary's installer — is not. Nor is the arm64 "no desktop
+  client in this installation" path, which needs an arm64 machine to see.
+- **`install.sh` has still never been executed**, though it no longer lacks a
+  release to point at. `sh -n` and — in CI only — `shellcheck` are all it gets.
+  Everything it depends on has now been confirmed against the real v0.3.0
+  separately: the archive names, the `SHA256SUMS` name and format, and the
+  `svpnd install` it hands over to. What is untested is the script itself.
 - **A real installation is untested.** `svpnd install` is exercised end to end
   against a temp prefix with `--no-service`, which covers everything except the
   three steps that need root — `groupadd`, `usermod` and `systemctl`. The

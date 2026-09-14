@@ -1,6 +1,19 @@
+<p align="center">
+  <img src="assets/image.png" width="380"
+       alt="The svpn desktop client, connected to vpn.sorint.it: a status line reading Connected, tiles for bytes received, bytes sent and uptime, and a Disconnect button.">
+</p>
+
 # svpn
 
 Connect to the Sorint.LAB VPN with ease.
+
+<p align="center">
+  <a href="https://github.com/paccolamano/svpn/actions/workflows/ci.yml"><img src="https://github.com/paccolamano/svpn/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status"></a>
+  <a href="https://github.com/paccolamano/svpn/releases/latest"><img src="https://img.shields.io/github/v/release/paccolamano/svpn?label=release" alt="Latest release"></a>
+  <a href="go.mod"><img src="https://img.shields.io/github/go-mod/go-version/paccolamano/svpn" alt="Go version"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/paccolamano/svpn" alt="MIT licence"></a>
+  <img src="https://img.shields.io/badge/platform-linux-lightgrey" alt="Linux only">
+</p>
 
 A FortiGate SSL VPN client in Go, with no external components: no
 `openfortivpn`, no `pppd`, no NetworkManager plugin. A privileged daemon owns
@@ -255,68 +268,6 @@ The protocol is not publicly specified. Every step above follows the behaviour
 of [openfortivpn](https://github.com/adrienverge/openfortivpn) (GPL-3.0), the
 de-facto reference implementation. No code was taken from it.
 
-## Layout
-
-There are three binaries and two of them are clients of the third. The tree
-says so:
-
-```
-cmd/svpn/        the CLI            \
-cmd/svpn-gui/    the desktop client  |  three mains, nothing else in them
-cmd/svpnd/       the daemon         /
-
-internal/ipc     the protocol between the clients and the daemon
-internal/forti   the FortiGate protocol: SAML, session, framing, tunnel
-internal/ppp     LCP and IPCP, the client half of the RFC 1661 exchange
-
-internal/client        dialling svpnd, diagnosing it, comparing versions
-internal/client/auth   the browser login: the one place a client meets the gateway
-internal/client/state  the controller: polling, connect and disconnect, no Fyne
-internal/client/cli    svpn's commands
-internal/client/gui    svpn-gui's widgets — the only package that needs cgo
-
-internal/service/daemon  the state machine behind the socket
-internal/service/vpn     orchestration and the data plane
-internal/service/tundev  the tun device, over wireguard-go's platform layer
-internal/service/netcfg  addresses, routes and DNS
-
-internal/probe   speaking to the gateway with no daemon: svpn probe, svpn debug
-internal/install the system service: group, unit, uid allowlist, launcher entry
-internal/desktop the .desktop format, for the launcher and for autostart
-internal/release resolving, verifying and unpacking a published build
-internal/sorint  the Sorint-specific values — gateway, group, artwork
-internal/log     the logger all three binaries share: levels, --detailed-errors
-internal/build   the version the linker stamps in
-```
-
-There are four kinds of package here. Three are protocols — `ipc` is ours,
-`forti` and `ppp` are the gateway's. Then `client/` is everything that *asks*
-for a tunnel and `service/` is everything that *is* one; the first runs as you,
-the second as root, and `ipc` is all that crosses between them.
-
-**`client/` speaks only `ipc`.** The single exception is `client/auth`, and it
-is why `auth` exists as a named boundary: the login needs a browser, and a
-system service has neither a browser nor a display, so a client has to do it
-and hand the cookie over. Past `auth`, nothing in `client/` sees a gateway.
-
-`internal/probe` is what makes that hold rather than nearly hold. `svpn probe`
-and `svpn debug connect` build a tunnel *without* the daemon — that is their
-whole purpose, answering "is it the protocol or is it this machine" — so they
-belong to neither side, and putting them in their own package is what keeps
-`forti` out of the command layer.
-
-`internal/client/gui` is the only package in the module that needs cgo, because
-Fyne links against OpenGL. That is why the controller is `client/state` and not
-part of it: the state machine stays in the half that `make crosscheck` and
-`golangci-lint` reach, and only the widgets sit outside.
-
-`internal/ppp` is kept independent of the FortiGate transport, so the same code
-works over anything that carries PPP frames. The options it offers and accepts
-mirror how `openfortivpn` invokes `pppd`: `noauth` (the cookie already
-authenticated the session), `noaccomp` and `nopcomp` (both header fields stay
-intact), `noipdefault` with `ipcp-accept-local` (the gateway assigns the
-address) and `usepeerdns`.
-
 ## Platform support
 
 | | protocol | daemon | desktop client |
@@ -326,50 +277,25 @@ address) and `usepeerdns`.
 | macOS | yes | not implemented | not built |
 | Windows | yes | not implemented | not built |
 
-The protocol half is pure Go with no cgo and builds for all four, so
-`svpn debug connect` should work on each — though it has only been exercised on
-Linux. The daemon does not build a working configuration elsewhere: macOS needs
-`scutil` and `route` in `netcfg` plus `LOCAL_PEERCRED` in `ipc`, and Windows
-needs named pipes with a security descriptor. Both return an explicit "not
-implemented" error rather than pretending.
+In short: **use it on Linux.** The protocol half is pure Go and builds
+everywhere, so `svpn debug connect` should work on any of these — but the
+daemon returns an explicit "not implemented" on macOS and Windows rather than
+pretending, and the desktop client is built for linux/amd64 only, because Fyne
+needs a C toolchain for the target. The arm64 archive therefore carries the
+daemon and the CLI, and `svpnd install` says so rather than quietly doing less.
 
-The desktop client is a different kind of gap. Its code is as portable as Fyne
-is; what does not travel is the build. Fyne links against OpenGL, so it needs
-cgo and a C toolchain **for the target**, which `go build` cannot produce on its
-own. amd64 is native on the release runner and needs only the `-dev` headers;
-arm64 would need a cross compiler plus arm64 X11 and GL headers, or a second
-native runner. Until then the arm64 archive carries the daemon and the CLI, and
-`svpnd install` says so rather than quietly doing less.
+## Development
 
 ```sh
 make check        # everything below, in one command
-make test         # 140 tests, with -race
+make test         # with -race
 make lint         # golangci-lint: formatting, vet, and the rest
 make crosscheck   # every target builds, minus the two cgo packages
 make check-config # the workflows, the release config and install.sh
 make snapshot     # build the release archives without tagging anything
+make gui-deps     # the headers Fyne links against (Debian and Ubuntu)
 ```
 
 `golangci-lint` is a tool dependency in `go.mod`, so there is nothing to
 install: `go tool` builds the pinned version from the module cache, and CI runs
 that same one.
-
-The lint configuration enforces two conventions this file describes in prose:
-`fmt.Errorf` is forbidden and so is importing the standard `errors`, because
-`--detailed-errors` can only reach the real failure if every error carries a
-stack. Both are `github.com/sorintlab/errors` instead.
-
-Two gaps are worth naming, both from the same cause: the privileged half cannot
-run under test.
-
-`internal/netcfg/linux.go` shells out to `ip` and `resolvectl`, so exercising it
-needs `CAP_NET_ADMIN`. Everything it decides *before* running a command — which
-routes, which addresses, which DNS domains — is factored out and tested, but the
-commands themselves are not.
-
-`internal/vpn` is driven through its injected seams (`Dial`, `NewTUN`,
-`Configurator`): the tests bring a connection up against a fake gateway that
-negotiates PPP, and check that the teardown puts everything back. What they
-cannot reach is a real tun device, so one assumption the shutdown rests on —
-that closing the device releases a read blocked in it — holds by construction in
-wireguard-go rather than by test here.

@@ -10,13 +10,14 @@ external runtime dependencies: no `openfortivpn`, no `pppd`, no NetworkManager
 plugin. The whole protocol stack — SAML login, session allocation, PPP-over-TLS
 framing, LCP/IPCP negotiation, tun device, routing, DNS — is implemented here.
 
-Two binaries: `svpn` (unprivileged client) and `svpnd` (privileged daemon).
-`README.md` explains the split and the protocol; do not duplicate it here.
+Three binaries: `svpnd` (privileged daemon) and its two clients, `svpn` (CLI)
+and `svpn-gui` (Fyne desktop client). `README.md` explains the split, the
+layout and the protocol; do not duplicate it here.
 
 ## Commands
 
 ```sh
-make build       # -> bin/svpn, bin/svpnd
+make build       # -> bin/svpn, bin/svpnd, bin/svpn-gui
 make test        # go test -race ./...
 make lint        # golangci-lint fmt --diff + golangci-lint run
 make crosscheck  # linux/amd64, windows/amd64, darwin/arm64 must all build
@@ -28,7 +29,18 @@ make release     # what the release workflow runs on a tag
 
 Run `make check` before declaring work finished. `make crosscheck` matters more
 than it looks: `netcfg` and `ipc` have per-platform files, and it is easy to
-break a build target you are not on.
+break a build target you are not on. It skips exactly two packages —
+`internal/client/gui` and `cmd/svpn-gui` — because Fyne needs an OpenGL
+toolchain for the *target*, which `go build` cannot cross-compile. Keep that
+list at two: anything added to the Fyne half stops being cross-checked.
+
+`make check` and `make test` need cgo and the OpenGL and X11 headers Fyne links
+against — `make gui-deps` installs them, and that target is the only place the
+list lives, because a desktop machine has them already and a wrong list shows
+up first on a runner. That is the
+price of the desktop client being a package of this module rather than a second
+one, and it is why `internal/client/state` exists: the controller is Fyne-free
+and stays in the half every target reaches.
 
 `golangci-lint` is a **tool dependency** in `go.mod`, so `make lint` runs
 `go tool golangci-lint` and the version lives in exactly one place. CI runs the
@@ -84,10 +96,15 @@ than letting `bind` fail with an unhelpful `EINVAL`.
   including a one-line delegation, where the wrap is what gives an otherwise
   stackless error a stack. `err113` is deliberately **not** enabled: it forbids
   dynamic errors, which is exactly the `errors.Errorf` idiom above.
-- **CLI: cobra**, one file per command under `cmd/<binary>/cmd/`. Each command
-  declares its options struct, registers flags in `init()`, and wraps its body
-  with the local `run()` helper, which handles exit codes and treats a
-  cancelled context as Ctrl-C rather than a failure.
+- **CLI: cobra**, one file per command. `svpn`'s live in
+  `internal/client/cli`, `svpnd`'s in `internal/service/cli`, and `cmd/` holds
+  three `main`s that do nothing but call `Execute`. Each command declares its
+  options struct, registers flags in `init()`, and wraps its body with the
+  local `run()` helper, which handles exit codes and treats a cancelled
+  context as Ctrl-C rather than a failure. `wrapcheck` is off for both `cli`
+  packages: errors stop there — `run()` prints them and sets the exit code —
+  and everything they call already wraps with a stack and a sentence written
+  for a person, so a wrap would print the same thing twice.
 - **Logging: `svpn: error: …` for a person, `<3>message key=value` for
   journald.** `internal/log` picks by destination, not by binary — `svpnd`
   under systemd and `svpnd install` in a terminal are different audiences for
@@ -102,21 +119,35 @@ than letting `bind` fail with an unhelpful `EINVAL`.
   interactive prompt.
 - **Comments explain why, not what.** The convention throughout this codebase
   is that a comment names the failure that motivated the code — see
-  `netcfg/linux.go` on why the address is a `/32` with no peer, or
-  `tundev/device.go` on the headroom constant. Match that. A comment
+  `service/netcfg/linux.go` on why the address is a `/32` with no peer, or
+  `service/tundev/device.go` on the headroom constant. Match that. A comment
   restating the line below it is noise.
 - **Sorint-specific values live in `internal/sorint`, nowhere else.**
   `internal/forti` is a generic FortiGate client and must not learn the
   company's hostname. This is what lets the unit `svpnd install` writes carry
-  no gateway arguments at all.
-- **`pkg/ipc` is public on purpose, and it is the only thing in `pkg/`.** A
-  Wails desktop GUI (the sibling project at `../sorint`, a separate module)
-  will be another client of the same daemon, and Go would not let it import
-  the protocol from `internal/`. Do not move it — and do not put anything else
-  next to it: `pkg/` means "the wire protocol", and a second package with a
-  weaker reason erodes that. `browser` used to live there and was moved to
-  `internal/` for exactly this reason; Wails opens its own URLs, so nothing
-  outside this module ever wanted it.
+  no gateway arguments at all. The artwork is there too, as `[]byte` and not
+  as `fyne.Resource`: `svpnd` imports this package for the icon it writes at
+  install time, and must not acquire an OpenGL toolchain in its dependency
+  graph to do it. `cmd/svpn-gui/icon.go` does the wrapping.
+- **Four kinds of package, and the rule for each is one sentence.**
+  `internal/{ipc,forti,ppp}` are protocols — the first ours, the other two the
+  gateway's. `internal/client/…` is everything that *asks* for a tunnel and
+  runs as the user; `internal/service/…` is everything that *is* one and runs
+  as root; `ipc` is all that crosses between them. **`client/` speaks only
+  `ipc`,** with `client/auth` the single deroga — the login is a FortiGate
+  flow and has to be, because the daemon has no browser — and past `auth`
+  nothing in `client/` sees a gateway. `internal/probe` is the fourth kind:
+  `svpn probe` and `svpn debug connect` build a tunnel *without* the daemon,
+  which is their whole purpose, so they belong to neither side. Keeping them
+  in their own package is what keeps `forti` out of the command layer; do not
+  put them back.
+- **`internal/client/gui` is the only package that needs cgo.** Fyne links
+  against OpenGL, so it and `cmd/svpn-gui` are the two `make crosscheck`
+  excludes. This is why the controller is `internal/client/state` and not part
+  of the widgets: 374 lines of tested state logic stay in the half that
+  crosscheck and the linter reach. Put new Fyne-free work there, not in
+  `gui/`. There used to be a `gui/go.mod`; the module boundary is not what
+  keeps these apart, the import graph is.
 - **Installation is code, not a README.** `internal/install` owns the group,
   the systemd unit and the uid allowlist, and `svpnd install` is the single
   privileged entry point: `install.sh`, `make install` and — eventually — a GUI
@@ -131,13 +162,21 @@ than letting `bind` fail with an unhelpful `EINVAL`.
   the installer be exercised against a temp directory with `--prefix`,
   `--unit-dir`, `--conf-dir` and `--no-service` — no root, no `CAP_NET_ADMIN`.
   Put new work on the Plan side of that line wherever it can go there.
-- **A GUI logs in by running `svpn login`, not by importing the SAML flow.**
-  That is why `forti.SAMLLogin` can stay in `internal/`. The flow has details
-  that are easy to get subtly wrong — the loopback callback, the validated
-  session id, the cookie taken verbatim because `net/http`'s parser would
-  rewrite it — and one implementation of it is the point. If this is ever
-  revisited, the decision to change is "does the login flow get a public
-  home", not "should this one helper be exported".
+- **There is one login, and it is `internal/client/auth`.** Both clients call
+  `auth.Login`; neither calls `forti.SAMLLogin`. The flow has details that are
+  easy to get subtly wrong in different ways — the loopback callback, the
+  validated session id, the cookie taken verbatim because `net/http`'s parser
+  would rewrite it — and there were briefly two copies of it, one in the
+  command layer and one behind `pkg/auth`, which is what the rule is guarding
+  against. `auth.Login` returns a whole `Session`, cookie *and* gateway,
+  because a cookie is only valid for the gateway that issued it.
+- **There is one way to reach the daemon, and it is `internal/client`.** It
+  dials, sends and closes; it explains an unreachable daemon; it compares the
+  two builds and leaves each client to say so its own way. Before it existed
+  the CLI had the diagnosis and the GUI had none, so a desktop user hitting
+  the `newgrp` case — the first launch after an install — saw a bare
+  permission error. Anything both clients would otherwise each grow belongs
+  here.
 
 ## Protocol facts that are not guessable
 
@@ -193,6 +232,13 @@ injectable seams so the orchestration can be driven with fakes.
 Do not claim a change to `netcfg` has been tested when it has not. Say what
 was verified and what was not.
 
+A desktop session, on the other hand, *is* available: `make build` produces
+`bin/svpn-gui` and it runs here. `svpnd install` is exercisable end to end
+against a temp prefix with `--prefix`, `--unit-dir`, `--conf-dir` and
+`--no-service`, launcher entry and icon included, and `make snapshot` builds
+the real release archives — so the release-to-install path can be checked
+without a tag.
+
 ## Current state
 
 Working end to end against the real `vpn.sorint.it` gateway on Linux: SAML
@@ -200,35 +246,59 @@ login, allocation, PPP negotiation, tun device, split routes, DNS.
 
 Known gaps, all deliberate and all honest in the README:
 
-- **macOS and Windows daemon.** The protocol half builds for all three
+- **macOS and Windows daemon.** The protocol half builds for all
   targets and `svpn debug connect` is expected to work there, though it has
   only ever been run on Linux. `netcfg` and `ipc` return
   explicit "not implemented" errors. macOS needs `scutil`/`route` and
   `LOCAL_PEERCRED`; Windows needs named pipes (go-winio or syscalls) with a
   security descriptor.
-- **`internal/vpn` is covered through its seams** (~74%), against a fake
-  gateway that negotiates PPP; see `internal/vpn/connection_test.go` for the
-  fakes. What no test here reaches is a real tun device, so the teardown's
-  reliance on `Close` releasing a blocked `Read` is unexercised.
-- **`internal/netcfg/linux.go` is ~4% covered.** What it decides before
+- **The desktop client is built for linux/amd64 only.** Not a code gap — Fyne
+  needs cgo and a C toolchain *for the target*, and arm64 would want a cross
+  compiler plus arm64 X11 and GL headers, or a second native runner. The arm64
+  archive therefore carries two binaries and the amd64 one three;
+  `.goreleaser.yml` says `allow_different_binary_count` for exactly that, and
+  `svpnd install` reports "no desktop client in this installation" rather than
+  quietly doing less.
+- **`internal/service/vpn` is covered through its seams** (~74%), against a
+  fake gateway that negotiates PPP; see `internal/service/vpn/connection_test.go`
+  for the fakes. What no test here reaches is a real tun device, so the
+  teardown's reliance on `Close` releasing a blocked `Read` is unexercised.
+- **`internal/service/netcfg/linux.go` is ~4% covered.** What it decides before
   running a command is factored out and tested; the commands are not. This is
   now the largest untested surface.
+- **Nothing in `internal/client/gui` is tested beyond formatting and the
+  tray.** `internal/client/state` is where the logic is and it is covered;
+  the widgets are not, and Fyne's `test` driver is what would reach them.
 - **No distro packaging** — no .deb/.rpm/AUR, deliberately. Distribution is
   GitHub Releases plus `svpnd install`; `.goreleaser.yml` builds linux
   amd64/arm64 only, because the daemon does not work anywhere else and shipping
   a binary that cannot install itself would promise something untrue.
 - **The release and CI workflows have never run.** `make check-config` validates
   them with `actionlint` and `goreleaser check`, and `make snapshot` proves the
-  goreleaser half locally, but nothing in `.github/workflows/` executes until a
-  push and a tag. `svpnd update` is in the same position: the download, checksum
-  and extraction are tested against an `httptest.Server`, the hand-over to the
-  new binary's installer is not.
+  goreleaser half locally — including that both archives install themselves,
+  which was checked by unpacking a snapshot and running its `svpnd install
+  --dry-run`. Nothing in `.github/workflows/` executes until a push and a tag,
+  and the one thing a snapshot cannot prove is the runner's apt packages:
+  the packages `make gui-deps` installs are now required by `test`, `lint` and
+  `release`, and if they are wrong the first sign will be a failing job.
+  `svpnd update` is in a similar position: the download, checksum and
+  extraction are tested against an `httptest.Server`, and `install.HasGUI`
+  decides whether the hand-over passes `--no-gui`, but the hand-over itself is
+  not exercised.
 - **`install.sh` has never been executed.** It needs a published release to
   point at. `sh -n` and — in CI only — `shellcheck` are all it gets.
 - **A real installation is untested.** `svpnd install` is exercised end to end
   against a temp prefix with `--no-service`, which covers everything except the
-  three steps that need root — `groupadd`, `usermod` and `systemctl`.
-- **Wails GUI integration** not started.
+  three steps that need root — `groupadd`, `usermod` and `systemctl`. The
+  launcher entry and the icon are written on that path and were inspected; what
+  no test here can show is a desktop environment actually picking them up.
+- **The desktop client has no preferences and no autostart yet.**
+  `internal/desktop` renders the autostart entry and knows where it goes, but
+  nothing writes one: that wants an `internal/client/prefs` — typed settings
+  over a `Store` seam on `fyne.Preferences`, the same shape as `state.Daemon` —
+  and a page in the window. Auto-reconnect belongs in `client/state` rather
+  than the daemon, because only the client side has a browser and so only it
+  can survive an expired cookie.
 
 ## Security
 

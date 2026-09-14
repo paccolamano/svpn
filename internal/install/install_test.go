@@ -274,6 +274,105 @@ func TestPlanTakesBothBinariesFromTheSourceDirectory(t *testing.T) {
 	}
 }
 
+// withGUI adds a desktop client to a fake install directory, which is what a
+// release archive for an architecture it is built for carries.
+func withGUI(t *testing.T, dir string) {
+	t.Helper()
+
+	if err := os.WriteFile(filepath.Join(dir, guiBinary), []byte("#!/bin/true\n"), 0o755); err != nil {
+		t.Fatalf("writing %s: %v", guiBinary, err)
+	}
+}
+
+func TestPlanTakesTheDesktopClientWhenThePayloadHasOne(t *testing.T) {
+	source := fakeInstallDir(t)
+	withGUI(t, source)
+	prefix := t.TempDir()
+
+	steps, err := Plan(Options{Prefix: prefix, UnitDir: t.TempDir(), ConfDir: t.TempDir(), User: currentUser(t)})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+
+	if !steps.GUI {
+		t.Fatal("Plan did not take the desktop client that was in the payload")
+	}
+	if len(steps.Binaries) != 3 {
+		t.Fatalf("planned %d binaries, want 3", len(steps.Binaries))
+	}
+	if want := filepath.Join(prefix, "bin", guiBinary); steps.Binaries[2].To != want {
+		t.Errorf("desktop client to %q, want %q", steps.Binaries[2].To, want)
+	}
+	// The launcher has to point at the installed path, not at the temporary
+	// directory the archive was unpacked into.
+	if !strings.Contains(steps.Desktop.Content, "Exec="+filepath.Join(prefix, "bin", guiBinary)) {
+		t.Errorf("desktop entry does not exec the installed binary:\n%s", steps.Desktop.Content)
+	}
+	if steps.Icon.Content == "" {
+		t.Error("no icon planned alongside the launcher entry")
+	}
+}
+
+// A release is built for architectures the desktop client is not, so a payload
+// without one is ordinary rather than an error — the same path --no-gui takes.
+func TestPlanWithoutADesktopClientIsNotAnError(t *testing.T) {
+	fakeInstallDir(t)
+
+	steps, err := Plan(Options{Prefix: t.TempDir(), UnitDir: t.TempDir(), ConfDir: t.TempDir(), User: currentUser(t)})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+
+	if steps.GUI {
+		t.Error("Plan reported a desktop client that was not in the payload")
+	}
+	if steps.Desktop.Path != "" || steps.Icon.Path != "" {
+		t.Errorf("planned a launcher entry with no client: %q, %q", steps.Desktop.Path, steps.Icon.Path)
+	}
+}
+
+func TestPlanSkipsTheDesktopClientWithNoGUI(t *testing.T) {
+	source := fakeInstallDir(t)
+	withGUI(t, source)
+
+	steps, err := Plan(Options{
+		Prefix: t.TempDir(), UnitDir: t.TempDir(), ConfDir: t.TempDir(),
+		User: currentUser(t), NoGUI: true,
+	})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+
+	if steps.GUI {
+		t.Error("--no-gui installed the desktop client anyway")
+	}
+	if len(steps.Binaries) != 2 {
+		t.Errorf("planned %d binaries, want 2", len(steps.Binaries))
+	}
+}
+
+// svpnd update asks this before handing over, so that an update does not add a
+// desktop client to a machine that never had one.
+func TestHasGUIFollowsTheInstalledPrefix(t *testing.T) {
+	prefix := t.TempDir()
+
+	if HasGUI(prefix) {
+		t.Error("HasGUI true for an empty prefix")
+	}
+
+	binDir := filepath.Join(prefix, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("creating %s: %v", binDir, err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, guiBinary), []byte("#!/bin/true\n"), 0o755); err != nil {
+		t.Fatalf("writing %s: %v", guiBinary, err)
+	}
+
+	if !HasGUI(prefix) {
+		t.Error("HasGUI false with the desktop client installed")
+	}
+}
+
 func TestPlanRefusesWhenTheClientIsMissing(t *testing.T) {
 	source := fakeInstallDir(t)
 	if err := os.Remove(filepath.Join(source, "svpn")); err != nil {

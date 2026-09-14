@@ -7,31 +7,13 @@ REPO_PATH="github.com/paccolamano/svpn"
 
 VERSION ?= $(shell scripts/git-version.sh)
 
-LD_FLAGS="-w -X $(REPO_PATH)/cmd.Version=$(VERSION)"
+LD_FLAGS="-w -X $(REPO_PATH)/internal/build.Version=$(VERSION)"
 
 $(shell mkdir -p bin )
 
-# golangci-lint is a tool dependency in go.mod, so `go tool golangci-lint`
-# below builds the pinned version out of the module cache. The version lives in
-# exactly one place and CI runs the same one without being told which.
-#
-# goreleaser and actionlint are not tool dependencies: their module graphs are
-# enormous — cloud SDKs for publishers this project does not use — and they are
-# needed a handful of times rather than on every build, so they are fetched on
-# demand instead of being carried in go.sum. They are still pinned here and
-# nowhere else: the workflows call these targets rather than naming a version of
-# their own, so a release cannot be built by a goreleaser that never ran here.
 GORELEASER_VERSION ?= v2.18.1
 ACTIONLINT_VERSION ?= v1.7.12
 
-# GOTOOLCHAIN=auto because these are tools, not dependencies, and a tool may ask
-# for a newer Go than the project targets. It is a fallback, not the main
-# mechanism: go.mod names a minor version with no patch, so setup-go installs
-# the runner's latest 1.27.x and a tool wanting a newer *patch* is already
-# satisfied. This covers the case where one wants a newer *minor*, which would
-# otherwise be a hard failure under the GOTOOLCHAIN=local that setup-go pins.
-#
-# Fetching a toolchain to run a tool does not change what svpn is built with.
 GORELEASER = GOTOOLCHAIN=auto go run github.com/goreleaser/goreleaser/v2@$(GORELEASER_VERSION)
 ACTIONLINT = GOTOOLCHAIN=auto go run github.com/rhysd/actionlint/cmd/actionlint@$(ACTIONLINT_VERSION)
 
@@ -39,7 +21,7 @@ ACTIONLINT = GOTOOLCHAIN=auto go run github.com/rhysd/actionlint/cmd/actionlint@
 all: build
 
 .PHONY: build
-build: svpn svpnd
+build: svpn svpnd svpn-gui
 
 # don't use existing file names and track go sources, let's do this to the go tool
 .PHONY: svpn
@@ -49,6 +31,31 @@ svpn:
 .PHONY: svpnd
 svpnd:
 	GO111MODULE=on go build -ldflags $(LD_FLAGS) -o $(PROJDIR)/bin/svpnd $(REPO_PATH)/cmd/svpnd
+
+# The desktop client. Same ldflags as the other two, which is what lets it
+# report its own build — as a separate module it was linked with -w alone and
+# had no version to show. It is the only binary here that needs cgo, so it is
+# also the only one that cannot be cross-compiled; see crosscheck below.
+.PHONY: svpn-gui
+svpn-gui:
+	GO111MODULE=on go build -ldflags $(LD_FLAGS) -o $(PROJDIR)/bin/svpn-gui $(REPO_PATH)/cmd/svpn-gui
+
+# The system libraries Fyne links against, as Debian and Ubuntu name them.
+#
+# Normally only CI runs this: a desktop machine already has them, dragged in by
+# whatever it runs its own session with — which is exactly how this list came
+# to be wrong once. The GUI built here and the runner failed on a header no
+# developer was missing, so the list lives in one place and the jobs call it
+# rather than each carrying a copy to go stale.
+#
+# GLFW compiles *both* its X11 and its Wayland backend unless a build tag picks
+# one (see go-gl's c_glfw_lin_*.go), so both sets of headers are required. The
+# wayland-protocols ones are not: go-gl vendors them already generated.
+GUI_DEPS = libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev
+
+.PHONY: gui-deps
+gui-deps:
+	sudo apt-get update && sudo apt-get install -y $(GUI_DEPS)
 
 .PHONY: test
 test:
@@ -77,13 +84,31 @@ lint:
 # It is the only thing that looks at the //go:build !linux halves of netcfg,
 # ipc and install: golangci-lint only ever analyses the host's GOOS, and go vet
 # cannot run here because it compiles the tests too, and those are Linux-only.
+#
+# Two packages are left out, and they are the only ones in the module that
+# need cgo: the Fyne widgets and the main that starts them. Fyne wants an
+# OpenGL toolchain for the *target*, which `go build` alone cannot
+# cross-compile. Everything else is checked — including internal/client/state,
+# the controller the GUI runs on, which is why that is a package of its own
+# rather than part of the Fyne half.
+#
+# The list is built by the host's GOOS: a variable assignment in front of a
+# command does not reach a command substitution in its arguments, so all three
+# legs below see the same packages.
+PORTABLE = $$(go list ./... | grep -v -e '/cmd/svpn-gui$$' -e '/internal/client/gui$$')
+
 .PHONY: crosscheck
 crosscheck:
-	GOOS=linux   GOARCH=amd64 go build -o /dev/null ./...
-	GOOS=windows GOARCH=amd64 go build -o /dev/null ./...
-	GOOS=darwin  GOARCH=arm64 go build -o /dev/null ./...
+	GOOS=linux   GOARCH=amd64 go build -o /dev/null $(PORTABLE)
+	GOOS=linux   GOARCH=arm64 go build -o /dev/null $(PORTABLE)
+	GOOS=windows GOARCH=amd64 go build -o /dev/null $(PORTABLE)
+	GOOS=darwin  GOARCH=arm64 go build -o /dev/null $(PORTABLE)
 
 # Everything CI runs, in one command.
+#
+# The GUI needs no target of its own here: it is a package of this module, so
+# lint and test reach it the same way they reach everything else. The cost is
+# that both now need cgo and the OpenGL and X11 headers Fyne links against.
 .PHONY: check
 check: lint test crosscheck check-config
 

@@ -25,6 +25,7 @@ import (
 
 	"github.com/sorintlab/errors"
 
+	"github.com/paccolamano/svpn/internal/desktop"
 	"github.com/paccolamano/svpn/internal/sorint"
 )
 
@@ -51,7 +52,17 @@ const (
 
 // binaries are installed under <prefix>/bin, always under these names
 // regardless of what the running executable happens to be called.
-var binaries = []string{"svpn", "svpnd"}
+//
+// The desktop client is separate because it is conditional twice over: it
+// needs cgo and a GL toolchain, so it is not built for every architecture the
+// other two are released for, and a headless machine has no use for it. An
+// install takes it when the payload has one, which makes "the release for this
+// architecture has no GUI" and "--no-gui" the same code path and neither a
+// special case.
+var (
+	binaries  = []string{"svpn", "svpnd"}
+	guiBinary = "svpn-gui"
+)
 
 //go:embed svpnd.service.tmpl
 var unitTemplate string
@@ -87,6 +98,9 @@ type Options struct {
 	Restart bool
 	// Purge, on an uninstall, also removes the group and the environment file.
 	Purge bool
+	// NoGUI skips the desktop client even when the payload carries one, for a
+	// machine that will never have a display.
+	NoGUI bool
 }
 
 // File is one file an installation writes.
@@ -121,6 +135,17 @@ type Steps struct {
 	// daemon's flags.
 	Unit File
 	Conf File
+	// Desktop and Icon are the launcher entry and its artwork, and are written
+	// only when the desktop client is part of this installation. Both are the
+	// zero File otherwise, which is what GUI reports.
+	//
+	// Icon.Content holds PNG bytes rather than text. Every other File here is
+	// a rendered template, but a second type for one field would be worse than
+	// the surprise: a Go string is a byte sequence and writeFile does not care.
+	Desktop File
+	Icon    File
+	// GUI reports that the desktop client is being installed.
+	GUI bool
 	// Service reports whether systemd should be told about any of this.
 	Service bool
 	// Restart carries Options.Restart through to Apply.
@@ -136,13 +161,12 @@ func Plan(options Options) (Steps, error) {
 		return Steps{}, err
 	}
 
-	copies := make([]BinaryCopy, 0, len(binaries))
+	copies := make([]BinaryCopy, 0, len(binaries)+1)
 	for _, name := range binaries {
 		from := filepath.Join(sourceDir, name)
 		to := filepath.Join(paths.binDir, name)
 
-		source, err := os.Stat(from)
-		if err != nil {
+		if _, err := os.Stat(from); err != nil {
 			// Running svpnd alone out of a directory is the normal way to get
 			// here, and "no such file" does not suggest what is missing.
 			return Steps{}, errors.Wrapf(err,
@@ -150,12 +174,19 @@ func Plan(options Options) (Steps, error) {
 				name, sourceDir)
 		}
 
-		same := false
-		if destination, err := os.Stat(to); err == nil {
-			same = os.SameFile(source, destination)
-		}
+		copies = append(copies, BinaryCopy{From: from, To: to, Same: sameFile(from, to)})
+	}
 
-		copies = append(copies, BinaryCopy{From: from, To: to, Same: same})
+	// The desktop client, if the payload has one and the caller wants it. Its
+	// absence is not an error: see the comment on guiBinary.
+	withGUI := false
+	if !options.NoGUI {
+		from := filepath.Join(sourceDir, guiBinary)
+		if _, err := os.Stat(from); err == nil {
+			to := filepath.Join(paths.binDir, guiBinary)
+			copies = append(copies, BinaryCopy{From: from, To: to, Same: sameFile(from, to)})
+			withGUI = true
+		}
 	}
 
 	target := resolveTargetUser(options.User, os.Getenv)
@@ -170,6 +201,28 @@ func Plan(options Options) (Steps, error) {
 		UID:      -1,
 		Service:  !options.NoService,
 		Restart:  options.Restart,
+		GUI:      withGUI,
+	}
+
+	if withGUI {
+		entry := desktop.Entry{
+			Name:    sorint.AppName,
+			Comment: sorint.AppComment,
+			Exec:    filepath.Join(paths.binDir, guiBinary),
+			// The icon's name in the theme, not a path: the file below puts it
+			// where a lookup will find it.
+			Icon: sorint.AppID,
+		}
+		steps.Desktop = File{
+			Path:    desktop.LauncherPath(paths.prefix, sorint.AppID),
+			Mode:    0o644,
+			Content: entry.Render(),
+		}
+		steps.Icon = File{
+			Path:    desktop.IconPath(paths.prefix, sorint.AppID),
+			Mode:    0o644,
+			Content: string(sorint.Icon),
+		}
 	}
 
 	if account != nil {
@@ -227,6 +280,14 @@ func (s Steps) Describe() []string {
 
 	lines = append(lines, "write "+s.Unit.Path, "write "+s.Conf.Path)
 
+	if s.GUI {
+		lines = append(lines, "write "+s.Desktop.Path, "write "+s.Icon.Path)
+	} else {
+		// True of both causes: a release for an architecture the client is
+		// not built for, and --no-gui.
+		lines = append(lines, "no desktop client in this installation, so no launcher entry")
+	}
+
 	if s.Service {
 		lines = append(lines, "systemctl daemon-reload, enable and start "+UnitName)
 	} else {
@@ -267,7 +328,48 @@ func PlanUninstall(options Options) UninstallSteps {
 		steps.Paths = append(steps.Paths, filepath.Join(paths.binDir, name))
 	}
 
+	// Listed unconditionally: ApplyUninstall skips a path that is not there,
+	// so an installation that never had a desktop client needs no check here
+	// and one that did is cleaned up whatever this binary was built with.
+	steps.Paths = append(steps.Paths,
+		filepath.Join(paths.binDir, guiBinary),
+		desktop.LauncherPath(paths.prefix, sorint.AppID),
+		desktop.IconPath(paths.prefix, sorint.AppID),
+	)
+
 	return steps
+}
+
+// HasGUI reports whether an installation under prefix includes the desktop
+// client.
+//
+// svpnd update asks before handing over: the archive carries a desktop client
+// whether or not this machine wanted one, and a server that installed with
+// --no-gui would otherwise acquire a launcher entry the first time it updated.
+func HasGUI(prefix string) bool {
+	if prefix == "" {
+		prefix = DefaultPrefix
+	}
+
+	_, err := os.Stat(filepath.Join(prefix, "bin", guiBinary))
+
+	return err == nil
+}
+
+// sameFile reports that source and destination are already the same file,
+// which happens when an installed svpnd installs itself again.
+func sameFile(from, to string) bool {
+	source, err := os.Stat(from)
+	if err != nil {
+		return false
+	}
+
+	destination, err := os.Stat(to)
+	if err != nil {
+		return false
+	}
+
+	return os.SameFile(source, destination)
 }
 
 // Describe renders the plan as the lines --dry-run prints.
@@ -289,6 +391,7 @@ func (s UninstallSteps) Describe() []string {
 
 // paths are the resolved destinations of an installation.
 type paths struct {
+	prefix   string
 	binDir   string
 	unitFile string
 	confFile string
@@ -319,6 +422,7 @@ func resolvePaths(options Options) paths {
 	}
 
 	return paths{
+		prefix:   prefix,
 		binDir:   filepath.Join(prefix, "bin"),
 		unitFile: filepath.Join(unitDir, UnitName),
 		confFile: filepath.Join(confDir, ConfName),

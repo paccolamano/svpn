@@ -23,6 +23,11 @@ jobs:
           # go.mod is the single source of the Go version; nothing here repeats it.
           go-version-file: go.mod
           cache: true
+      # Fyne links against OpenGL, X11 and Wayland. internal/client/gui is
+      # the only package that needs them, but it is a package of this module
+      # like any other, so the jobs that walk ./... need them too. The list is
+      # in the Makefile: three jobs carried a copy and all three were wrong.
+      - run: make gui-deps
       - run: go test -race ./...
 
   lint:
@@ -33,6 +38,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      # Fyne links against OpenGL, X11 and Wayland. internal/client/gui is
+      # the only package that needs them, but it is a package of this module
+      # like any other, so the jobs that walk ./... need them too. The list is
+      # in the Makefile: three jobs carried a copy and all three were wrong.
+      - run: make gui-deps
       # golangci-lint is a tool dependency in go.mod, so this runs the pinned
       # version without the workflow naming one. There is no second place for
       # the version to drift from, and `make lint` is these same two commands.
@@ -57,18 +67,6 @@ jobs:
 
   crosscheck:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - goos: linux
-            goarch: amd64
-          - goos: linux
-            goarch: arm64
-          - goos: windows
-            goarch: amd64
-          - goos: darwin
-            goarch: arm64
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -78,7 +76,10 @@ jobs:
       # netcfg, ipc and install have per-platform files, so it is easy to break
       # a target nobody builds locally. The daemon only works on Linux, but the
       # protocol half claims to build everywhere.
-      - run: go build -o /dev/null ./...
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
+      #
+      # make crosscheck, not a matrix of its own: the target list and the two
+      # cgo packages excluded from it live in the Makefile, so `make crosscheck`
+      # here checks exactly what it checks on a developer's machine. The matrix
+      # this replaced had drifted — it built linux/arm64, a real release
+      # target, that the Makefile did not.
+      - run: make crosscheck
